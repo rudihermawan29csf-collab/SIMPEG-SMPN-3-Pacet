@@ -1,0 +1,5 @@
+{
+  "name": "SIMPEG SMPN 3 Pacet",
+  "description": "Sistem Informasi Manajemen Kepegawaian SMPN 3 Pacet. Aplikasi input data dan upload dokumen terintegrasi Google Drive Sekolah.",
+  "requestFramePermissions": []
+}
