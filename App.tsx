@@ -5,18 +5,21 @@ import { EmployeeForm } from './components/EmployeeForm';
 import { DocumentUpload } from './components/DocumentUpload';
 import { User, Role, EmployeeData } from './types';
 import { mockAuthService, mockDataService } from './services/mockService';
-import { Menu, LogOut, ArrowRight, ChevronDown, Lock, User as UserIcon } from 'lucide-react';
+import { Menu, LogOut, ArrowRight, ChevronDown, Lock, User as UserIcon, WifiOff } from 'lucide-react';
 
 const LoginPage = ({ onLogin }: { onLogin: (user: User) => void }) => {
   const [users, setUsers] = useState<{username: string, name: string, role: string}[]>([]);
   const [selectedUsername, setSelectedUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isDataLoaded, setIsDataLoaded] = useState(false);
 
   useEffect(() => {
+    // Load users (will be instant if cached/offline fallback works)
     mockAuthService.getLoginUsers().then(list => {
         setUsers(list);
         if(list.length > 0) setSelectedUsername(list[0].username);
+        setIsDataLoaded(true);
     });
   }, []);
 
@@ -36,6 +39,17 @@ const LoginPage = ({ onLogin }: { onLogin: (user: User) => void }) => {
       setIsLoading(false);
     }
   };
+
+  if (!isDataLoaded) {
+      return (
+          <div className="min-h-screen flex items-center justify-center bg-slate-100">
+              <div className="text-center">
+                  <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                  <p className="text-slate-500">Menghubungkan ke sistem...</p>
+              </div>
+          </div>
+      )
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4">
@@ -188,9 +202,6 @@ function App() {
   useEffect(() => {
     if (user?.role === 'employee' && (currentView === 'my-profile' || currentView === 'documents')) {
         mockDataService.getAllEmployees().then(emps => {
-            // In a real app, we would fetch by User ID mapped to Employee ID
-            // For demo: if logged in user is found in list, use that.
-            // Current mock login returns a user with ID equal to the employee ID (if employee)
             const myProfile = emps.find(e => e.id === user.id);
             setProfileData(myProfile || emps[0]); 
         });
@@ -245,12 +256,10 @@ function App() {
                         <EmployeeForm 
                             initialData={profileData} 
                             onSave={(data) => {
-                                console.log("Saving", data);
-                                alert("Data berhasil disimpan (Simulasi)");
+                                mockDataService.updateEmployee(data).then(() => {
+                                     alert("Data berhasil disimpan");
+                                });
                             }}
-                            // If admin view detail: Editable (Admin controls verif). 
-                            // If employee view detail: Editable (Employee fills data).
-                            // Logic: The form handles its own internal disabled states for Admin Verification fields.
                             readOnly={false} 
                             userRole={user.role}
                         />
@@ -273,6 +282,9 @@ function App() {
         return <Dashboard />;
     }
   };
+
+  // Check offline status for UI Badge
+  const isOffline = mockDataService.isOffline();
 
   return (
     <div className="flex min-h-screen bg-slate-50 font-sans">
@@ -299,13 +311,22 @@ function App() {
 
         {/* Top Bar Desktop */}
         <header className="hidden md:flex bg-white/80 backdrop-blur-md border-b border-slate-200 px-8 py-4 justify-between items-center sticky top-0 z-10">
-            <div className="text-sm breadcrumbs text-slate-500">
-                <span>SIMPEG</span>
-                <span className="mx-2">/</span>
-                <span className="capitalize text-slate-800 font-medium">
-                    {currentView.replace('-', ' ')}
-                </span>
+            <div className="flex items-center gap-4">
+                 <div className="text-sm breadcrumbs text-slate-500">
+                    <span>SIMPEG</span>
+                    <span className="mx-2">/</span>
+                    <span className="capitalize text-slate-800 font-medium">
+                        {currentView.replace('-', ' ')}
+                    </span>
+                </div>
+                {isOffline && (
+                    <div className="flex items-center gap-1.5 px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-xs font-semibold">
+                        <WifiOff size={14} />
+                        Mode Offline
+                    </div>
+                )}
             </div>
+           
             <div className="flex items-center gap-4">
                 <div className="text-right hidden lg:block">
                     <p className="text-sm font-semibold text-slate-800">{user.name}</p>

@@ -3,7 +3,7 @@ import {
   Save, User, Briefcase, GraduationCap, Users, FileText, CheckCircle, 
   ChevronRight, Plus, Trash2, CreditCard
 } from 'lucide-react';
-import { EmployeeData, EmploymentStatus, Gender, FamilyMember, Role } from '../types';
+import { EmployeeData, EmploymentStatus, Gender, FamilyMember, Role, AsnData, NonAsnData, EducationData } from '../types';
 import { DocumentUpload } from './DocumentUpload';
 
 interface EmployeeFormProps {
@@ -270,7 +270,7 @@ export const EmployeeForm: React.FC<EmployeeFormProps> = ({ initialData, onSave,
   const renderTab3_Specifics = () => {
     if (isASN) {
       // ASN FORM
-      const asn = formData.asnData || { asnType: formData.status === EmploymentStatus.PNS ? 'PNS' : 'PPPK' };
+      const asn = (formData.asnData || { asnType: formData.status === EmploymentStatus.PNS ? 'PNS' : 'PPPK' }) as Partial<AsnData>;
       const setAsn = (field: string, val: any) => handleNestedChange('asnData', field, val);
 
       return (
@@ -343,7 +343,7 @@ export const EmployeeForm: React.FC<EmployeeFormProps> = ({ initialData, onSave,
       );
     } else {
       // NON-ASN FORM
-      const nonAsn = formData.nonAsnData || {};
+      const nonAsn = (formData.nonAsnData || {}) as Partial<NonAsnData>;
       const setNonAsn = (field: string, val: any) => handleNestedChange('nonAsnData', field, val);
 
       return (
@@ -375,7 +375,7 @@ export const EmployeeForm: React.FC<EmployeeFormProps> = ({ initialData, onSave,
   };
 
   const renderTab4_Education = () => {
-      const edu = formData.education || {};
+      const edu = (formData.education || {}) as Partial<EducationData>;
       const setEdu = (field: string, val: any) => handleNestedChange('education', field, val);
       return (
         <div className="space-y-6 animate-fade-in">
