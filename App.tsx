@@ -5,20 +5,32 @@ import { EmployeeForm } from './components/EmployeeForm';
 import { DocumentUpload } from './components/DocumentUpload';
 import { User, Role, EmployeeData } from './types';
 import { mockAuthService, mockDataService } from './services/mockService';
-import { Menu, LogOut, ArrowRight, ChevronDown, Lock, User as UserIcon, WifiOff } from 'lucide-react';
+import { Menu, LogOut, ArrowRight, ChevronDown, Lock, User as UserIcon, WifiOff, AlertTriangle, UserPlus, Mail } from 'lucide-react';
+import { isFirebaseConfigured } from './firebaseConfig';
 
 const LoginPage = ({ onLogin }: { onLogin: (user: User) => void }) => {
+  // State for View (Login vs Register)
+  const [isRegistering, setIsRegistering] = useState(false);
+
+  // Login States
   const [users, setUsers] = useState<{username: string, name: string, role: string}[]>([]);
-  const [selectedUsername, setSelectedUsername] = useState('');
+  const [selectedUsername, setSelectedUsername] = useState(''); // Can be email in input
   const [password, setPassword] = useState('');
+  
+  // Register States
+  const [regName, setRegName] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regPass, setRegPass] = useState('');
+  const [regPassConfirm, setRegPassConfirm] = useState('');
+
   const [isLoading, setIsLoading] = useState(false);
   const [isDataLoaded, setIsDataLoaded] = useState(false);
 
   useEffect(() => {
-    // Load users (will be instant if cached/offline fallback works)
+    // Load users (for dropdown convenience in login, optional in real auth flow)
     mockAuthService.getLoginUsers().then(list => {
         setUsers(list);
-        if(list.length > 0) setSelectedUsername(list[0].username);
+        if(list.length > 0 && !selectedUsername) setSelectedUsername(list[0].username);
         setIsDataLoaded(true);
     });
   }, []);
@@ -40,6 +52,33 @@ const LoginPage = ({ onLogin }: { onLogin: (user: User) => void }) => {
     }
   };
 
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!regName || !regEmail || !regPass) {
+        alert("Mohon lengkapi semua data pendaftaran.");
+        return;
+    }
+    if (regPass !== regPassConfirm) {
+        alert("Konfirmasi password tidak cocok.");
+        return;
+    }
+    if (regPass.length < 6) {
+        alert("Password minimal 6 karakter.");
+        return;
+    }
+
+    setIsLoading(true);
+    try {
+        const user = await mockAuthService.register(regName, regEmail, regPass);
+        alert("Pendaftaran Berhasil! Anda akan otomatis login.");
+        onLogin(user);
+    } catch (err: any) {
+        alert(err.message);
+    } finally {
+        setIsLoading(false);
+    }
+  };
+
   if (!isDataLoaded) {
       return (
           <div className="min-h-screen flex items-center justify-center bg-slate-100">
@@ -52,8 +91,13 @@ const LoginPage = ({ onLogin }: { onLogin: (user: User) => void }) => {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4">
-      <div className="bg-white max-w-md w-full rounded-2xl shadow-xl p-8">
+    <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4 relative">
+      {!isFirebaseConfigured && (
+          <div className="absolute top-0 left-0 right-0 bg-amber-500 text-white text-center py-2 text-sm font-medium px-4">
+              ⚠️ Mode Demo: Firebase belum dikonfigurasi. Fitur Register dinonaktifkan.
+          </div>
+      )}
+      <div className="bg-white max-w-md w-full rounded-2xl shadow-xl p-8 mt-8">
         <div className="text-center mb-8">
             <div className="w-16 h-16 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center mb-4 text-white text-2xl font-bold">
                 3
@@ -62,60 +106,175 @@ const LoginPage = ({ onLogin }: { onLogin: (user: User) => void }) => {
             <p className="text-slate-500">Sistem Informasi Kepegawaian</p>
         </div>
         
-        <form onSubmit={handleLogin} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Pilih Pengguna</label>
-            <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <UserIcon className="h-5 w-5 text-slate-400" />
+        {isRegistering ? (
+            // --- FORM REGISTER ---
+            <form onSubmit={handleRegister} className="space-y-4 animate-fade-in">
+                <div className="text-center mb-4">
+                    <h2 className="text-lg font-bold text-slate-800">Daftar Akun Baru</h2>
+                    <p className="text-xs text-slate-500">Khusus Guru & Staf SMPN 3 Pacet</p>
                 </div>
-                <select
-                    value={selectedUsername}
-                    onChange={(e) => setSelectedUsername(e.target.value)}
-                    className="w-full pl-10 pr-10 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all appearance-none bg-white text-slate-700"
+
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Nama Lengkap</label>
+                    <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <UserIcon className="h-5 w-5 text-slate-400" />
+                        </div>
+                        <input
+                            type="text"
+                            value={regName}
+                            onChange={(e) => setRegName(e.target.value)}
+                            className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                            placeholder="Nama sesuai SK"
+                            required
+                        />
+                    </div>
+                </div>
+
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Email Aktif</label>
+                    <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <Mail className="h-5 w-5 text-slate-400" />
+                        </div>
+                        <input
+                            type="email"
+                            value={regEmail}
+                            onChange={(e) => setRegEmail(e.target.value)}
+                            className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                            placeholder="email@contoh.com"
+                            required
+                        />
+                    </div>
+                </div>
+
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
+                    <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <Lock className="h-5 w-5 text-slate-400" />
+                        </div>
+                        <input
+                            type="password"
+                            value={regPass}
+                            onChange={(e) => setRegPass(e.target.value)}
+                            className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                            placeholder="Minimal 6 karakter"
+                            required
+                        />
+                    </div>
+                </div>
+
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Konfirmasi Password</label>
+                    <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <Lock className="h-5 w-5 text-slate-400" />
+                        </div>
+                        <input
+                            type="password"
+                            value={regPassConfirm}
+                            onChange={(e) => setRegPassConfirm(e.target.value)}
+                            className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                            placeholder="Ulangi password"
+                            required
+                        />
+                    </div>
+                </div>
+
+                <button
+                    type="submit"
+                    disabled={isLoading}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-3 rounded-xl transition-colors shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 mt-2"
                 >
-                    {users.map(u => (
-                        <option key={u.username} value={u.username}>
-                            {u.name} ({u.role === 'admin' ? 'Admin' : 'Guru/Staf'})
-                        </option>
-                    ))}
-                </select>
-                <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                    <ChevronDown className="h-5 w-5 text-slate-400" />
+                    {isLoading ? 'Mendaftarkan...' : (
+                        <>
+                            <UserPlus size={18} />
+                            Daftar Sekarang
+                        </>
+                    )}
+                </button>
+
+                <div className="text-center mt-4 pt-4 border-t border-slate-100">
+                    <p className="text-sm text-slate-600">
+                        Sudah punya akun? {' '}
+                        <button 
+                            type="button" 
+                            onClick={() => setIsRegistering(false)}
+                            className="text-blue-600 font-semibold hover:underline"
+                        >
+                            Login disini
+                        </button>
+                    </p>
+                </div>
+            </form>
+        ) : (
+            // --- FORM LOGIN ---
+            <form onSubmit={handleLogin} className="space-y-4 animate-fade-in">
+            <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Email / Username</label>
+                <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <UserIcon className="h-5 w-5 text-slate-400" />
+                    </div>
+                    {/* If strictly using email for auth, Input Text is better than Select for flexibility */}
+                    <input
+                        type="text"
+                        value={selectedUsername}
+                        onChange={(e) => setSelectedUsername(e.target.value)}
+                        className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                        placeholder="Masukkan Email Anda"
+                        required
+                    />
                 </div>
             </div>
-          </div>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
-            <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Lock className="h-5 w-5 text-slate-400" />
+            <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
+                <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <Lock className="h-5 w-5 text-slate-400" />
+                    </div>
+                    <input
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                        placeholder="Masukkan password"
+                    />
                 </div>
-                <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
-                    placeholder="Masukkan password"
-                />
+                <p className="text-xs text-slate-400 mt-1 text-right">Admin Default: admin@smpn3.id / admin123</p>
             </div>
-            <p className="text-xs text-slate-400 mt-1 text-right">Default: guru123 (Admin: admin123)</p>
-          </div>
 
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-xl transition-colors shadow-lg shadow-blue-600/20 flex items-center justify-center gap-2"
-          >
-            {isLoading ? 'Memproses...' : (
-                <>
-                    Masuk Aplikasi
-                    <ArrowRight size={18} />
-                </>
+            <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-xl transition-colors shadow-lg shadow-blue-600/20 flex items-center justify-center gap-2"
+            >
+                {isLoading ? 'Memproses...' : (
+                    <>
+                        Masuk Aplikasi
+                        <ArrowRight size={18} />
+                    </>
+                )}
+            </button>
+
+            {isFirebaseConfigured && (
+                <div className="text-center mt-4 pt-4 border-t border-slate-100">
+                    <p className="text-sm text-slate-600">
+                        Belum punya akun? {' '}
+                        <button 
+                            type="button" 
+                            onClick={() => setIsRegistering(true)}
+                            className="text-blue-600 font-semibold hover:underline"
+                        >
+                            Daftar disini
+                        </button>
+                    </p>
+                </div>
             )}
-          </button>
-        </form>
+            </form>
+        )}
       </div>
     </div>
   );
@@ -234,119 +393,73 @@ function App() {
         if (!profileData) return <div>Loading...</div>;
         return (
             <div className="space-y-6 animate-fade-in">
-                 <div className="flex items-center gap-4">
+                 <div className="flex items-center gap-4 mb-4">
                     {currentView === 'employee-detail' && (
                         <button 
                             onClick={() => setCurrentView('employees')}
                             className="p-2 hover:bg-slate-200 rounded-full transition-colors"
                         >
-                            <ArrowRight className="rotate-180" size={20}/>
+                            <ArrowRight className="rotate-180" size={20} />
                         </button>
                     )}
-                    <div>
-                        <h2 className="text-2xl font-bold text-slate-800">
-                            {currentView === 'my-profile' ? 'Data Pribadi Saya' : 'Detail Pegawai'}
-                        </h2>
-                        <p className="text-slate-500">Kelola informasi dan dokumen kepegawaian</p>
-                    </div>
-                </div>
-
-                <div className="grid grid-cols-1 gap-6">
-                    <div className="xl:col-span-2">
-                        <EmployeeForm 
-                            initialData={profileData} 
-                            onSave={(data) => {
-                                mockDataService.updateEmployee(data).then(() => {
-                                     alert("Data berhasil disimpan");
-                                });
-                            }}
-                            readOnly={false} 
-                            userRole={user.role}
-                        />
-                    </div>
-                </div>
+                    <h2 className="text-2xl font-bold text-slate-800">
+                        {currentView === 'my-profile' ? 'Data Pribadi Saya' : 'Detail Pegawai'}
+                    </h2>
+                 </div>
+                 
+                 <EmployeeForm 
+                    initialData={profileData}
+                    userRole={user.role}
+                    readOnly={false}
+                    onSave={async (data) => {
+                        await mockDataService.updateEmployee(data);
+                        alert("Data berhasil disimpan!");
+                        setProfileData(data);
+                    }}
+                 />
             </div>
         );
       case 'documents':
-        if (!profileData) return <div>Loading...</div>;
-        return (
-            <div className="space-y-6 animate-fade-in">
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-800">Dokumen Saya</h2>
-                    <p className="text-slate-500">Unggah dan kelola arsip digital</p>
-                </div>
-                <DocumentUpload employeeId={profileData.id} />
-            </div>
-        );
+         // View khusus dokumen jika diakses dari sidebar (employee only)
+         if (!user) return null;
+         return (
+             <div className="space-y-6 animate-fade-in">
+                 <h2 className="text-2xl font-bold text-slate-800">Dokumen Saya</h2>
+                 <DocumentUpload employeeId={user.id} />
+             </div>
+         )
       default:
         return <Dashboard />;
     }
   };
 
-  // Check offline status for UI Badge
-  const isOffline = mockDataService.isOffline();
-
   return (
-    <div className="flex min-h-screen bg-slate-50 font-sans">
+    <div className="flex min-h-screen bg-slate-100 font-sans text-slate-900">
       <Sidebar 
         role={user.role} 
-        activeView={currentView === 'employee-detail' ? 'employees' : currentView}
+        activeView={currentView} 
         onChangeView={setCurrentView}
         onLogout={handleLogout}
         isOpen={sidebarOpen}
         setIsOpen={setSidebarOpen}
       />
 
-      <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
+      <main className="flex-1 h-screen overflow-y-auto">
         {/* Mobile Header */}
-        <header className="bg-white border-b border-slate-200 p-4 md:hidden flex items-center justify-between">
-            <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold">3</div>
-                <span className="font-bold text-slate-800">SIMPEG</span>
+        <div className="md:hidden bg-white p-4 flex items-center justify-between sticky top-0 z-20 shadow-sm">
+            <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-white">3</div>
+                <span className="font-bold text-slate-800">SMPN 3 Pacet</span>
             </div>
             <button onClick={() => setSidebarOpen(true)} className="p-2 text-slate-600">
-                <Menu />
+                <Menu size={24} />
             </button>
-        </header>
+        </div>
 
-        {/* Top Bar Desktop */}
-        <header className="hidden md:flex bg-white/80 backdrop-blur-md border-b border-slate-200 px-8 py-4 justify-between items-center sticky top-0 z-10">
-            <div className="flex items-center gap-4">
-                 <div className="text-sm breadcrumbs text-slate-500">
-                    <span>SIMPEG</span>
-                    <span className="mx-2">/</span>
-                    <span className="capitalize text-slate-800 font-medium">
-                        {currentView.replace('-', ' ')}
-                    </span>
-                </div>
-                {isOffline && (
-                    <div className="flex items-center gap-1.5 px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-xs font-semibold">
-                        <WifiOff size={14} />
-                        Mode Offline
-                    </div>
-                )}
-            </div>
-           
-            <div className="flex items-center gap-4">
-                <div className="text-right hidden lg:block">
-                    <p className="text-sm font-semibold text-slate-800">{user.name}</p>
-                    <p className="text-xs text-slate-500 capitalize">{user.role}</p>
-                </div>
-                <img 
-                    src={user.avatarUrl} 
-                    alt="Profile" 
-                    className="w-10 h-10 rounded-full border-2 border-slate-100 object-cover" 
-                />
-            </div>
-        </header>
-
-        {/* Main Content Area */}
-        <main className="flex-1 overflow-y-auto p-4 md:p-8">
-            <div className="max-w-7xl mx-auto">
-                {renderContent()}
-            </div>
-        </main>
-      </div>
+        <div className="p-4 md:p-8 max-w-7xl mx-auto">
+            {renderContent()}
+        </div>
+      </main>
     </div>
   );
 }

@@ -1,36 +1,15 @@
 import { EmployeeData, User, DocumentItem, DashboardStats, EmploymentStatus, Gender } from '../types';
+import { auth, db, isFirebaseConfigured, GOOGLE_SCRIPT_URL, isDriveConfigured } from '../firebaseConfig';
+import * as firebaseAuth from 'firebase/auth';
+import { 
+  collection, getDocs, doc, setDoc, getDoc, deleteDoc
+} from 'firebase/firestore';
 
-// --- KONFIGURASI API ---
-// Ganti dengan URL Google Apps Script Anda yang sudah dideploy sebagai Web App (Exec)
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzsXLjoDKJfhBplFY73MwWAVcq17KRIat-LmAeD8dZrZ04rGLrlxVzI611OF5sacbP_/exec"; 
-
-const STORAGE_KEY = 'simpeg_local_data';
-let cachedEmployees: EmployeeData[] | null = null;
-let isOfflineMode = false;
-
-// --- LOCAL STORAGE HELPER ---
-const saveToLocal = (data: EmployeeData[]) => {
-    try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    } catch (e) {
-        console.error("Gagal menyimpan ke local storage", e);
-    }
-};
-
-const loadFromLocal = (): EmployeeData[] | null => {
-    try {
-        const data = localStorage.getItem(STORAGE_KEY);
-        return data ? JSON.parse(data) : null;
-    } catch (e) {
-        return null;
-    }
-};
-
-// --- OFFLINE DATA FALLBACK ---
+// --- DATA DUMMY (FALLBACK MODE) ---
 const OFFLINE_EMPLOYEES: EmployeeData[] = [
   {
     id: 'offline-1',
-    fullName: 'Budi Santoso (Contoh)',
+    fullName: 'Budi Santoso (Demo)',
     nik: '3201010101010001',
     nip: '198001012010011001',
     birthPlace: 'Bandung',
@@ -38,9 +17,9 @@ const OFFLINE_EMPLOYEES: EmployeeData[] = [
     gender: Gender.L,
     religion: 'Islam',
     maritalStatus: 'Kawin',
-    address: 'Jl. Merdeka No. 1',
+    address: 'Jl. Merdeka No. 1, Pacet',
     phone: '081234567890',
-    email: 'budi@example.com',
+    email: 'budi@smpn3.id',
     status: EmploymentStatus.PNS,
     employeeType: 'Guru',
     position: 'Guru Matematika',
@@ -53,224 +32,378 @@ const OFFLINE_EMPLOYEES: EmployeeData[] = [
     education: { level: 'S1', major: 'Pendidikan Matematika', institution: 'UPI', graduationYear: '2004', certificateNumber: 'IJZ-123' },
     family: [],
     verification: { isVerified: 'Disetujui', adminNotes: '', lastUpdated: '2024-01-01' },
-    completeness: 100
+    completeness: 85
+  },
+  {
+    id: 'offline-2',
+    fullName: 'Siti Aminah (Demo)',
+    nik: '3201010101010002',
+    birthPlace: 'Cianjur',
+    birthDate: '1995-05-15',
+    gender: Gender.P,
+    religion: 'Islam',
+    maritalStatus: 'Belum Kawin',
+    address: 'Jl. Raya Cipanas',
+    phone: '085712345678',
+    email: 'siti@smpn3.id',
+    status: EmploymentStatus.HONORER,
+    employeeType: 'Tenaga Kependidikan',
+    position: 'Staf Tata Usaha',
+    mainTask: 'Administrasi',
+    unit: 'SMPN 3 Pacet',
+    tmtDuty: '2020-07-01',
+    teachingHours: 0,
+    skNumber: '421/SK-HONOR/2020',
+    skOfficial: 'Kepala Sekolah',
+    education: { level: 'D3', major: 'Manajemen Informatika', institution: 'Politeknik', graduationYear: '2019', certificateNumber: 'IJZ-456' },
+    family: [],
+    verification: { isVerified: 'Belum Diverifikasi', adminNotes: '', lastUpdated: '' },
+    completeness: 40
   }
 ];
 
-// --- API CLIENT HELPER ---
-const apiCall = async (action: string, data: any = {}) => {
-  if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes("YOUR_SCRIPT_ID_HERE")) {
-    throw new Error("URL Server belum disetting");
-  }
+const DOMAIN = "@smpn3.id";
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
-
-  try {
-    const response = await fetch(`${APPS_SCRIPT_URL}?action=${action}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(data),
-      signal: controller.signal
-    });
-    
-    clearTimeout(timeoutId);
-
-    if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
-    const result = await response.json();
-    if (!result.success) throw new Error(result.message);
-    
-    isOfflineMode = false;
-    return result.data || result;
-
-  } catch (error: any) {
-    clearTimeout(timeoutId);
-    isOfflineMode = true;
-    console.warn(`[API Fail] ${action}: Menggunakan mode offline/lokal.`);
-    throw error;
-  }
+// Helper: Convert File to Base64
+const fileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = error => reject(error);
+  });
 };
 
 // --- DATA SERVICE ---
 export const mockDataService = {
-  isOffline: () => isOfflineMode,
+  // Jika config belum diganti, paksa mode offline
+  isOffline: () => !isFirebaseConfigured,
 
   getStats: async (): Promise<DashboardStats> => {
-    const employees = await mockDataService.getAllEmployees();
+    // Gunakan data fallback jika offline/error
+    let employees = [];
+    try {
+      if (!isFirebaseConfigured) throw new Error("Unconfigured");
+      employees = await mockDataService.getAllEmployees();
+    } catch (e) {
+      employees = OFFLINE_EMPLOYEES;
+    }
+
     return {
-        totalEmployees: employees.length,
-        totalPNS: employees.filter((e: any) => e.status === EmploymentStatus.PNS).length,
-        totalPPPK: employees.filter((e: any) => e.status === EmploymentStatus.PPPK).length,
-        totalHonorer: employees.filter((e: any) => ['Honorer', 'GTT', 'PTT'].includes(e.status)).length,
-        documentsUploaded: 0 
+      totalEmployees: employees.length,
+      totalPNS: employees.filter((e: any) => e.status === EmploymentStatus.PNS).length,
+      totalPPPK: employees.filter((e: any) => e.status === EmploymentStatus.PPPK).length,
+      totalHonorer: employees.filter((e: any) => ['Honorer', 'GTT', 'PTT'].includes(e.status)).length,
+      documentsUploaded: 0 // Nanti bisa dihitung real dari subkoleksi jika perlu
     };
   },
 
   getAllEmployees: async (): Promise<EmployeeData[]> => {
-    // 1. Coba Ambil dari Server (Prioritas Utama untuk Sync Antar Perangkat)
+    if (!isFirebaseConfigured) return OFFLINE_EMPLOYEES;
+
     try {
-        const serverData = await apiCall('getEmployees');
-        if (Array.isArray(serverData)) {
-            cachedEmployees = serverData;
-            saveToLocal(serverData); // Update backup lokal
-            return serverData;
-        }
-    } catch (e) {
-        // Abaikan error, lanjut ke fallback
+      const querySnapshot = await getDocs(collection(db, "employees"));
+      const employees: EmployeeData[] = [];
+      querySnapshot.forEach((doc) => {
+        employees.push({ id: doc.id, ...doc.data() } as EmployeeData);
+      });
+      return employees.length > 0 ? employees : OFFLINE_EMPLOYEES; // Fallback jika DB kosong
+    } catch (error) {
+      console.warn("Firebase Error (getAllEmployees):", error);
+      return OFFLINE_EMPLOYEES; // Fallback agar UI tetap jalan
     }
-
-    // 2. Jika Server Gagal, Ambil Cache Memori
-    if (cachedEmployees) return cachedEmployees;
-
-    // 3. Jika Memori Kosong, Ambil LocalStorage (Agar refresh aman)
-    const localData = loadFromLocal();
-    if (localData) {
-        cachedEmployees = localData;
-        return localData;
-    }
-
-    // 4. Terakhir, Data Dummy
-    cachedEmployees = OFFLINE_EMPLOYEES;
-    return OFFLINE_EMPLOYEES;
   },
 
   getEmployeeById: async (id: string): Promise<EmployeeData | undefined> => {
-    const employees = await mockDataService.getAllEmployees();
-    return employees.find((e: EmployeeData) => e.id === id);
+    if (!isFirebaseConfigured) return OFFLINE_EMPLOYEES.find(e => e.id === id);
+
+    try {
+      const docRef = doc(db, "employees", id);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        return { id: docSnap.id, ...docSnap.data() } as EmployeeData;
+      }
+      return undefined;
+    } catch (error) {
+      console.warn("Firebase Error (getById):", error);
+      return OFFLINE_EMPLOYEES.find(e => e.id === id);
+    }
   },
 
   updateEmployee: async (data: EmployeeData): Promise<void> => {
-    if (!data.id) data.id = data.nip || data.nik || `EMP-${Date.now()}`;
-
-    // 1. Optimistic Update (Update Lokal Dulu)
-    let currentData = cachedEmployees || loadFromLocal() || [];
-    
-    const index = currentData.findIndex(e => e.id === data.id);
-    if (index >= 0) {
-        currentData[index] = data;
-    } else {
-        currentData.push(data);
+    if (!isFirebaseConfigured) {
+      alert("Mode Demo: Data tidak disimpan ke server (Firebase belum dikonfigurasi).");
+      return;
     }
-    
-    cachedEmployees = currentData;
-    saveToLocal(currentData); // Simpan ke browser
 
-    // 2. Kirim ke Server
     try {
-        await apiCall('saveEmployee', data);
-        // Jika berhasil, tidak perlu update apa-apa lagi
-    } catch (e) {
-        alert("⚠️ PERINGATAN KONEKSI:\n\nData BERHASIL disimpan di perangkat ini, TETAPI gagal dikirim ke server.\n\nData ini TIDAK AKAN MUNCUL di perangkat lain sampai koneksi pulih.");
+      const docId = data.id || data.nik || `new_${Date.now()}`;
+      const docRef = doc(db, "employees", docId);
+      await setDoc(docRef, { ...data, id: docId }, { merge: true });
+    } catch (error) {
+      console.error("Error updateEmployee:", error);
+      alert("Gagal menyimpan data. Periksa koneksi atau izin Firebase.");
+      throw error;
     }
   },
 
+  // --- NEW: GET DOCUMENTS FROM FIRESTORE SUBCOLLECTION (NOT STORAGE LIST) ---
   getDocuments: async (employeeId: string): Promise<DocumentItem[]> => {
-    // Bisa tambahkan logic serupa untuk dokumen jika perlu
-    return []; 
+    if (!isFirebaseConfigured) return [];
+
+    try {
+      // Kita ambil metadata dokumen yang tersimpan di Firestore
+      // Path: employees/{id}/documents/{docId}
+      const docsRef = collection(db, "employees", employeeId, "documents");
+      const snap = await getDocs(docsRef);
+      
+      const docs: DocumentItem[] = [];
+      snap.forEach((doc) => {
+        docs.push(doc.data() as DocumentItem);
+      });
+      
+      return docs;
+    } catch (error) {
+      console.error("Error getting docs:", error);
+      return [];
+    }
   },
 
+  // --- NEW: UPLOAD TO GOOGLE DRIVE VIA APPS SCRIPT & SAVE METADATA TO FIRESTORE ---
   uploadDocument: async (employeeId: string, docId: string, file: File): Promise<DocumentItem> => {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = async () => {
-            const base64Content = (reader.result as string).split(',')[1];
-            
-            // Jika offline, simulasi sukses
-            if (isOfflineMode) {
-                 setTimeout(() => {
-                    resolve({
-                        id: docId,
-                        type: 'Uploaded Doc',
-                        label: file.name,
-                        status: 'uploaded',
-                        url: '#',
-                        fileName: file.name,
-                        uploadedAt: new Date().toLocaleDateString(),
-                        size: `${(file.size / 1024 / 1024).toFixed(2)} MB`
-                    });
-                 }, 500);
-                 return;
-            }
+    
+    // 1. Validasi Mode
+    if (!isFirebaseConfigured || !isDriveConfigured) {
+      // Mock Upload
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          resolve({
+            id: docId,
+            type: 'Uploaded Doc',
+            label: file.name,
+            status: 'uploaded',
+            url: '#',
+            fileName: file.name,
+            uploadedAt: new Date().toLocaleDateString(),
+            size: `${(file.size / 1024 / 1024).toFixed(2)} MB`
+          });
+        }, 1500);
+      });
+    }
 
-            try {
-                const result = await apiCall('uploadDocument', {
-                    employeeId, docType: docId, fileName: file.name, mimeType: file.type, base64Data: base64Content
-                });
-                resolve({
-                    id: docId,
-                    type: 'Uploaded Doc',
-                    label: file.name,
-                    status: 'uploaded',
-                    url: result.url,
-                    fileName: file.name,
-                    uploadedAt: new Date().toLocaleDateString(),
-                    size: `${(file.size / 1024 / 1024).toFixed(2)} MB`
-                });
-            } catch (err) {
-                // Fallback offline upload simulation
-                isOfflineMode = true;
-                resolve({
-                    id: docId,
-                    type: 'Uploaded Doc (Lokal)',
-                    label: file.name,
-                    status: 'uploaded',
-                    url: '#',
-                    fileName: file.name,
-                    uploadedAt: new Date().toLocaleDateString(),
-                    size: `${(file.size / 1024 / 1024).toFixed(2)} MB`
-                });
-                alert("Upload berhasil secara LOKAL. Dokumen belum masuk Google Drive server.");
-            }
-        };
-        reader.onerror = error => reject(error);
-    });
+    try {
+      // 2. Convert File ke Base64 untuk dikirim ke Google Script
+      const base64Data = await fileToBase64(file);
+      
+      // 3. Kirim ke Google Apps Script Web App
+      // Kita gunakan fetch POST dengan 'no-cors' biasanya tricky untuk dapat response JSON,
+      // tapi dengan Apps Script yang di set "Anyone", kita coba standard POST.
+      // NOTE: Mengirim text/plain agar tidak kena preflight OPTIONS request yang sering gagal di GAS.
+      const payload = {
+        fileData: base64Data,
+        fileName: `${employeeId}_${docId}_${file.name}`,
+        mimeType: file.type,
+        employeeName: employeeId
+      };
+
+      const response = await fetch(GOOGLE_SCRIPT_URL, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+
+      const result = await response.json();
+
+      if (result.result !== 'success') {
+        throw new Error(result.error || "Gagal upload ke Google Drive");
+      }
+
+      // 4. Sukses Upload ke Drive -> Simpan Metadata ke Firestore
+      const newDoc: DocumentItem = {
+        id: docId,
+        type: 'Uploaded Doc',
+        label: file.name, // Label asli dari input form
+        status: 'uploaded',
+        url: result.url, // URL Download dari Drive
+        fileName: file.name,
+        uploadedAt: new Date().toLocaleDateString('id-ID'),
+        size: `${(file.size / 1024 / 1024).toFixed(2)} MB`
+      };
+
+      // Simpan ke subcollection: employees/{id}/documents/{docId}
+      const docRef = doc(db, "employees", employeeId, "documents", docId);
+      await setDoc(docRef, newDoc);
+
+      return newDoc;
+
+    } catch (error) {
+      console.error("Error uploadDocument:", error);
+      throw error;
+    }
   }
 };
 
-// --- AUTH SERVICE ---
+// --- AUTH SERVICE (SAME AS BEFORE) ---
 export const mockAuthService = {
   getLoginUsers: async () => {
-    // Ambil data terbaru (Server > Local > Dummy)
-    const employees = await mockDataService.getAllEmployees();
-    
-    // Transform ke format User Login
-    const userList = employees.map((emp: EmployeeData) => ({
-        username: emp.nip || emp.nik,
-        name: emp.fullName,
-        role: 'employee'
-    }));
-    
-    const admin = { username: 'admin', name: 'Administrator', role: 'admin' };
-    return [admin, ...userList];
+    if (!isFirebaseConfigured) {
+        return [
+            { username: 'admin', name: 'Administrator (Demo)', role: 'admin' },
+            { username: '198001012010011001', name: 'Budi Santoso (Demo)', role: 'employee' }
+        ];
+    }
+
+    try {
+        const emps = await mockDataService.getAllEmployees();
+        const users = emps.map(e => ({
+            username: e.email || e.nip || e.nik, // Prefer email for login list
+            name: e.fullName,
+            role: 'employee'
+        }));
+        // Admin hardcoded for list visibility (in real app, usually hidden)
+        users.unshift({ username: 'admin@smpn3.id', name: 'Administrator', role: 'admin' });
+        return users;
+    } catch (e) {
+        return [];
+    }
   },
 
   login: async (username: string, password?: string): Promise<User> => {
-    if (username === 'admin') {
-      if (password !== 'admin123') throw new Error('Password Admin salah!');
-      return { id: 'admin-1', username: 'admin', name: 'Administrator', role: 'admin', avatarUrl: 'https://ui-avatars.com/api/?name=Admin' };
-    }
-    
-    if (password !== 'guru123') throw new Error('Password salah! Gunakan: guru123');
-    
-    const employees = await mockDataService.getAllEmployees();
-    const emp = employees.find((e: EmployeeData) => (e.nip === username || e.nik === username));
-    
-    if (emp) {
-        return {
-            id: emp.id,
-            username: emp.nip || emp.nik,
-            name: emp.fullName,
-            role: 'employee',
-            avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(emp.fullName)}&background=random`
+    if (!isFirebaseConfigured) {
+        if (username === 'admin') {
+            if (password !== 'admin123') throw new Error('Password Admin Demo: admin123');
+            return { id: 'admin', username: 'admin', name: 'Administrator (Demo)', role: 'admin', avatarUrl: 'https://ui-avatars.com/api/?name=Admin' };
+        }
+        return { 
+            id: 'offline-1', 
+            username: username, 
+            name: 'Guru Demo', 
+            role: 'employee', 
+            avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(username)}` 
         };
     }
-    
-    // Fallback demo
-    if (username === 'demo') return { id: 'demo-1', username: 'demo', name: 'Guru Demo', role: 'employee' };
-    
-    throw new Error('User tidak ditemukan.');
+
+    try {
+      // Normalize email input
+      let email = username.trim();
+      
+      // AUTO-FIX: Handle 'admin' shorthand
+      if (email.toLowerCase() === 'admin') {
+        email = 'admin@smpn3.id';
+      } 
+      // AUTO-FIX: Handle NIP/Username without domain
+      else if (!email.includes('@')) {
+        email = `${email}@smpn3.id`; 
+      }
+
+      const userCredential = await firebaseAuth.signInWithEmailAndPassword(auth, email, password || '');
+      const firebaseUser = userCredential.user;
+
+      // Determine role based on specific email or Firestore data
+      // For MVP: Admin email is hardcoded or checked via a specific collection
+      let role: 'admin' | 'employee' = 'employee';
+      
+      // Simple Admin Check
+      if (email.startsWith('admin') || email === 'operator@smpn3.id') {
+        role = 'admin';
+      }
+
+      // Fetch user detail from Firestore "employees" collection to get Real Name
+      let fullName = username;
+      try {
+          const userDoc = await getDoc(doc(db, "employees", firebaseUser.uid));
+          if (userDoc.exists()) {
+              const data = userDoc.data();
+              fullName = data.fullName;
+          }
+      } catch (e) {
+          console.log("No profile yet");
+      }
+
+      return {
+        id: firebaseUser.uid,
+        username: email,
+        name: fullName,
+        role: role,
+        avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=random`
+      };
+
+    } catch (error: any) {
+      console.error("Login Error:", error.code);
+      if (
+        error.code === 'auth/invalid-credential' || 
+        error.code === 'auth/user-not-found' || 
+        error.code === 'auth/wrong-password' ||
+        error.code === 'auth/invalid-email'
+      ) {
+          throw new Error("Akun tidak ditemukan atau password salah. Jika belum punya akun, silakan Daftar.");
+      }
+      throw new Error("Login Gagal. " + error.message);
+    }
+  },
+
+  // NEW REGISTER FUNCTION
+  register: async (name: string, email: string, password: string): Promise<User> => {
+      if (!isFirebaseConfigured) {
+          throw new Error("Tidak bisa mendaftar di Mode Demo. Harap konfigurasi Firebase.");
+      }
+
+      try {
+          // 1. Create Auth User
+          const userCredential = await firebaseAuth.createUserWithEmailAndPassword(auth, email, password);
+          const firebaseUser = userCredential.user;
+
+          // 2. Create Initial Employee Data in Firestore
+          // This ensures the app doesn't crash when trying to load their profile
+          const newEmployee: EmployeeData = {
+              id: firebaseUser.uid,
+              fullName: name,
+              email: email,
+              nik: '',
+              birthPlace: '',
+              birthDate: '',
+              gender: Gender.L, // Default
+              religion: 'Islam',
+              maritalStatus: 'Belum Kawin',
+              address: '',
+              phone: '',
+              status: EmploymentStatus.HONORER, // Default status
+              employeeType: 'Guru',
+              position: 'Guru',
+              mainTask: 'Mengajar',
+              unit: 'SMPN 3 Pacet',
+              tmtDuty: new Date().toISOString().split('T')[0],
+              teachingHours: 0,
+              skNumber: '',
+              skOfficial: '',
+              education: { level: '', major: '', institution: '', graduationYear: '', certificateNumber: '' },
+              family: [],
+              verification: { isVerified: 'Belum Diverifikasi', adminNotes: '', lastUpdated: new Date().toLocaleDateString('id-ID') },
+              completeness: 10
+          };
+
+          await setDoc(doc(db, "employees", firebaseUser.uid), newEmployee);
+
+          return {
+              id: firebaseUser.uid,
+              username: email,
+              name: name,
+              role: 'employee',
+              avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random`
+          };
+
+      } catch (error: any) {
+          console.error("Register Error:", error);
+          if (error.code === 'auth/email-already-in-use') {
+              throw new Error("Email ini sudah terdaftar. Silakan login.");
+          }
+          if (error.code === 'auth/weak-password') {
+              throw new Error("Password terlalu lemah (min. 6 karakter).");
+          }
+          throw new Error("Gagal mendaftar: " + error.message);
+      }
   },
   
-  logout: async () => {}
+  logout: async () => {
+    if (isFirebaseConfigured) await firebaseAuth.signOut(auth);
+  }
 };
